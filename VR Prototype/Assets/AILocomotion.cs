@@ -32,11 +32,15 @@ public class AILocomotion : MonoBehaviour
         if (agent == null) agent = GetComponent<NavMeshAgent>();
         if (animator == null) animator = GetComponentInChildren<Animator>();
         timer = wanderTimer;
+
+        // 初始状态：确保桌上的酒杯是关闭的，手里的是打开的
+        if(tableWine != null) tableWine.SetActive(false);
+        if(handWine != null) handWine.SetActive(true);
     }
 
     void Update()
     {
-        // 持续把双脚的真实移动速度，汇报给肌肉（控制 Idle 和 Walk 切换）
+        // 实时同步移动速度到动画机参数 Speed
         if (animator != null && agent != null)
         {
             animator.SetFloat("Speed", agent.velocity.magnitude);
@@ -44,7 +48,7 @@ public class AILocomotion : MonoBehaviour
 
         if (isGivingAttention)
         {
-            // 🌟 终极护身符：只要剧情锁没解开（还在倒酒阶段），绝对不转身，防止酒杯穿模！
+            // 只有在可以自由行动（即倒酒动作已结束）的情况下才转身看向玩家，防止倒酒动作穿模
             if (canWalkFreely && player != null)
             {
                 Vector3 direction = (player.position - transform.position).normalized;
@@ -58,8 +62,10 @@ public class AILocomotion : MonoBehaviour
             return; 
         }
 
+        // 如果剧情锁没解开，就原地待命
         if (!canWalkFreely) return; 
 
+        // 自由漫步逻辑
         timer += Time.deltaTime;
         if (timer >= wanderTimer)
         {
@@ -69,34 +75,42 @@ public class AILocomotion : MonoBehaviour
         }
     }
 
+    // 🧠 由 GeminiChat 发起对话时调用
     public void StopAndFacePlayer()
     {
         isGivingAttention = true;
-        if (agent != null && agent.isOnNavMesh) agent.isStopped = true;
-        Debug.Log("👀 接收到打断指令，AI 停下动作准备听讲...");
+        if (agent != null && agent.isOnNavMesh) 
+        {
+            agent.isStopped = true;
+            agent.velocity = Vector3.zero;
+        }
+        Debug.Log("👀 Jack：正在倾听，暂时停止动作。");
     }
 
+    // 🧠 由 GeminiChat 话说完后调用：触发倒酒结束、切换杯子、开始走路
     public void ResumeWandering()
     {
+        // 1. 解除专注和剧情锁
         isGivingAttention = false;
-        canWalkFreely = true; // 砸碎剧情锁
+        canWalkFreely = true; 
         
-        // 🌟🌟🌟 终极闭环！倒酒结束，通知肌肉强行切换到站姿！
+        // 2. 🌟 触发倒酒结束动画
         if (animator != null)
         {
             animator.SetTrigger("FinishPour"); 
         }
         
-        // 🌟 终极障眼法：AI 开步走的同时，灭掉手里的酒杯，点亮桌上的酒杯！
+        // 3. 🍷 障眼法切换：手里杯子灭，桌上杯子亮
         if (handWine != null) handWine.SetActive(false);
         if (tableWine != null) tableWine.SetActive(true);
 
+        // 4. 恢复双腿导航
         if (agent != null && agent.isOnNavMesh)
         {
             agent.isStopped = false;
             timer = wanderTimer; 
         }
-        Debug.Log("🚶‍♂️ 剧情锁解除，酒杯已放下，肌肉状态切换，AI 开始自由漫步...");
+        Debug.Log("🚶‍♂️ Jack：酒已斟好，我先失陪去走走。");
     }
 
     public static Vector3 RandomNavSphere(Vector3 origin, float dist, int layermask)

@@ -5,64 +5,71 @@ using UnityEngine.Networking;
 
 public class GeminiChat : MonoBehaviour
 {
-    [Header("🧠 谷歌 Gemini 大脑设置")]
-    public string geminiApiKey = "YOUR_GEMINI_API_KEY"; 
-    private const string GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
-    [Header("🗣️ ElevenLabs 嘴巴设置")]
-    public string elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY";
+    [Header("🧠 谷歌 Gemini 设置")]
+    public string geminiApiKey = "在这里填入API_KEY"; 
+    // 🌟 终极修正：如果 1.5-flash 报 404，换成这个 gemini-pro 绝对能通
+    private const string GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+    [Header("🗣️ ElevenLabs 设置")]
+    public string elevenLabsApiKey = "在这里填入API_KEY";
     public string voiceId = "ErXwobaYiN019PkySvjV"; 
     public AudioSource aiAudioSource;
 
-    [HideInInspector] 
-    public bool isThinking = false; 
+    [Header("🎭 联动组件")]
+    public Animator animator;
+    public AILocomotion aiLegs; 
 
-    void Start()
-    {
-        Debug.Log("🧠 Gemini 大脑已开机，防刷屏+防标点符号报错版！");
+    [Header("🛡️ 安全锁 (防止宕机/429)")]
+    public float requestCooldown = 2.0f; 
+    private float lastRequestTime = -5f;
+    [HideInInspector] public bool isThinking = false; 
+
+    void Start() { 
+        Debug.Log("🧠 Jack 艺术版大脑：识别即注视 + 5s思考/留白逻辑就绪。");
     }
 
     public void StopSpeaking()
     {
         StopAllCoroutines(); 
-        if (aiAudioSource != null && aiAudioSource.isPlaying)
-        {
-            aiAudioSource.Stop();
-        }
+        if (aiAudioSource != null && aiAudioSource.isPlaying) aiAudioSource.Stop();
         isThinking = false;
-        Debug.Log("🛑 玩家打断了 AI 的施法！AI 瞬间闭嘴听讲。");
+        if (aiLegs != null) aiLegs.StopAndFacePlayer(); 
     }
 
+    // 🌟 核心改动：当 VoiceRecorder 识别到说话时，先调用这个
     public void AskGemini(string userText)
     {
+        if (Time.time - lastRequestTime < requestCooldown) return;
         if (isThinking) return;
+
+        lastRequestTime = Time.time;
         StartCoroutine(SendRequestToGemini(userText));
     }
 
     private IEnumerator SendRequestToGemini(string prompt)
     {
         isThinking = true; 
+        
+        // 1. 🌟 识别到说话，立刻停下并盯着你 (作为思考的开始)
+        if (aiLegs != null) aiLegs.StopAndFacePlayer();
+        Debug.Log("⏳ Jack 正在倾听并思考...");
 
         string jsonRequestBody = "{\"contents\": [{\"parts\":[{\"text\": \"" + prompt + "\"}]}]}";
         byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonRequestBody);
-        string requestUrl = GEMINI_URL + "?key=" + geminiApiKey.Trim();
 
-        using (UnityWebRequest request = UnityWebRequest.Put(requestUrl, bodyRaw))
+        using (UnityWebRequest request = UnityWebRequest.Put(GEMINI_URL + "?key=" + geminiApiKey.Trim(), bodyRaw))
         {
             request.method = "POST"; 
             request.SetRequestHeader("Content-Type", "application/json");
-
             yield return request.SendWebRequest();
 
-            if (request.result == UnityWebRequest.Result.ConnectionError || request.result == UnityWebRequest.Result.ProtocolError)
+            if (request.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogError("🚨 大脑连接失败: " + request.responseCode);
-                isThinking = false; 
+                Debug.LogError($"🚨 大脑报错: {request.responseCode}");
+                ResetState(); 
             }
             else
             {
                 string cleanAnswer = ExtractTextFromJson(request.downloadHandler.text);
-                Debug.Log("🤖 大脑想好了台词: " + cleanAnswer);
                 StartCoroutine(GetAudioFromElevenLabs(cleanAnswer));
             }
         }
@@ -70,13 +77,7 @@ public class GeminiChat : MonoBehaviour
 
     private IEnumerator GetAudioFromElevenLabs(string textToSpeak)
     {
-        // 🌟 终极净化法：把所有可能引发 422 报错的标点符号、换行、回车、制表符统统碾碎！
-        string safeText = textToSpeak.Replace("\\", "")
-                                     .Replace("\"", "\\\"")
-                                     .Replace("\n", " ")
-                                     .Replace("\r", " ")
-                                     .Replace("\t", " ");
-                                     
+        string safeText = textToSpeak.Replace("\\", "").Replace("\"", "\\\"").Replace("\n", " ").Replace("\r", " ").Replace("\t", " ");
         string url = "https://api.elevenlabs.io/v1/text-to-speech/" + voiceId;
         string jsonRequestBody = "{\"text\": \"" + safeText + "\", \"model_id\": \"eleven_multilingual_v2\"}";
         byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonRequestBody);
@@ -87,36 +88,32 @@ public class GeminiChat : MonoBehaviour
             request.downloadHandler = new DownloadHandlerAudioClip(url, AudioType.MPEG);
             request.SetRequestHeader("Content-Type", "application/json");
             request.SetRequestHeader("xi-api-key", elevenLabsApiKey.Trim());
-
             yield return request.SendWebRequest();
 
-            if (request.result == UnityWebRequest.Result.ConnectionError || request.result == UnityWebRequest.Result.ProtocolError)
-            {
-                Debug.LogError("🚨 语音生成失败: " + request.error);
-                isThinking = false; 
-            }
-            else
+            if (request.result == UnityWebRequest.Result.Success)
             {
                 AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
                 if (aiAudioSource != null && clip != null)
                 {
                     aiAudioSource.clip = clip;
                     aiAudioSource.Play();
-                    StartCoroutine(UnlockAfterAudio(clip.length));
-                }
-                else
-                {
-                    isThinking = false;
+                    
+                    // 2. 话说完之前，保持注视
+                    yield return new WaitForSeconds(clip.length);
+                    
+                    // 3. 🌟 话说完了，再额外原地对视 5 秒（介绍自己后的沉淀）
+                    Debug.Log("⏳ 话说完了，原地站立 5 秒...");
+                    yield return new WaitForSeconds(5.0f);
                 }
             }
+            ResetState(); 
         }
     }
 
-    private IEnumerator UnlockAfterAudio(float audioLength)
+    private void ResetState()
     {
-        yield return new WaitForSeconds(audioLength);
         isThinking = false;
-        Debug.Log("✅ AI 发言完毕，可以进行下一次对话了！");
+        if (aiLegs != null) aiLegs.ResumeWandering(); 
     }
 
     private string ExtractTextFromJson(string json)
@@ -125,12 +122,11 @@ public class GeminiChat : MonoBehaviour
         {
             string searchString = "\"text\": \"";
             int startIndex = json.IndexOf(searchString);
-            if (startIndex == -1) return "没听清，请再说一遍。";
+            if (startIndex == -1) return "...";
             startIndex += searchString.Length;
             int endIndex = json.IndexOf("\"", startIndex);
-            // 这里也做一次基础清理
-            return json.Substring(startIndex, endIndex - startIndex).Replace("\\n", " ").Replace("\\\"", "\"").Replace("\\t", " ");
+            return json.Substring(startIndex, endIndex - startIndex).Replace("\\n", " ").Replace("\\\"", "\"");
         }
-        catch { return "解析异常。"; }
+        catch { return "..."; }
     }
 }
